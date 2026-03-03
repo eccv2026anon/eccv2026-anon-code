@@ -1,0 +1,34 @@
+name: structrecon
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - pip
+  - pytorch
+  - numpy
+  - scipy
+  - matplotlib
+  - scikit-image
+  - scikit-learn
+  - pandas
+  - opencv
+  - pyqt
+  - qt
+  - matplotlib-base
+  - pillow
+  - yacs
+  - tqdm
+  - pyyaml
+  - colorama
+  - shapely
+  - packaging
+  - psutil
+  - pip:
+      - addict
+      - imageio
+      - trimesh
+      - gdown
+      - fvcore
+      - iopath
+      - open3d

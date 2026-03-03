@@ -1,0 +1,73 @@
+
+
+dataset: 'ICPARK'
+
+
+mapping:
+  extras_render_device: "cuda:1"
+  export_blocks_instead_of_mesh: true
+  presegmented_blocks_dir: output/ICPARK_StructRecon/preoptimized_blocks
+  bound: [[37.9265, 293.2444], [-3.5017, 262.6937], [-0.2400, 3.0000]]
+  marching_cubes_bound: [[37.9265, 293.2444], [-3.5017, 262.6937], [-0.2400, 3.0000]]
+  load_decoder_warmup: True
+  freeze_decoder_if_warmup_loaded: false
+  edge_guided_pixels_ratio: 0.7
+  loss_plot_interval: 0
+  rgb_loss_type: "strict"
+  color_hit_weight_thresh: 0.003
+  rgb_charbonnier_eps: 5e-5
+  rgb_loss_in_lab: true
+  rgb_strict_w_l2: 2.5
+  rgb_strict_w_charb: 1.5
+  rgb_strict_w_cos: 1.5
+  decoder_warmup:
+    enable: true
+    iters: 2000
+    lr_mult: 5.0
+    pixels: 6000
+    w_color_scale: 0.2
+    w_depth_scale: 1.0
+    color_bootstrap:
+      enable: true
+      last_iters: 2000
+      lr_mult: 5.0
+      w_color_scale: 1.0
+  dual_weight_arbitration:
+    enable: true
+    prior_weight_gamma: 1.0
+    dynamic_occlusion_threshold: 0.5
+    confidence_threshold_std: 0.1
+    data_weight_epsilon: 0.1
+
+cam:
+  H: 720
+  W: 1280
+  fx: 534.1400
+  fy: 534.0450
+  cx: 634.2850
+  cy: 363.2920
+  png_depth_scale: 1000.0
+
+data:
+  input_folder: "Datasets/ICPARK"
+  output: "output/ICPARK_StructRecon"
+
+
+enable_prior_structural_constraints: true
+structural_constraints_weight_wall: 1.0
+structural_constraints_weight_manhattan: 0.5
+
+meshing:
+  bound_source: structrecon
+  debug_visualize: true
+  use_prior_planes: true
+  use_init_decoder: false
+  blockwise_meshing: true
+  _visualize_per_batch : false
+  max_points: 800000000
+  resolution: 0.03
+  z_clip_max: 2.5
+  block_padding_voxels: 0
+  mc_mask_erode_iters: 2
+  decoder_use_global_bound: true
+  write_interior_margin_voxels: 1

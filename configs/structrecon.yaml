@@ -1,0 +1,186 @@
+device: "cuda:0"
+keyframe_device: "cuda:0"
+
+dataset: "ICPARK"
+verbose: false
+seed: 3407
+scale: 1.0
+
+model:
+  c_dim: 32
+  c_dim_fine: 32
+  c_dim_app: 32
+  hidden_size: 64
+  n_blocks: 2
+  truncation: 0.06
+  block_size: 7.68
+  use_block_manager: false
+
+  enable_prior_initialization: true
+  prior_tsdf_path: "output/ICPARKOSM_generated/Dparking_prior_tsdf.npy"
+  prior_tsdf_origin_xyz: [37.92651181, -3.50169141, -0.24]
+  prior_tsdf_voxel_size: 0.06
+  prior_init_iterations: 2000
+  prior_init_lr_planes: 0.008
+  prior_init_samples_per_batch: 32768
+  preoptimized_blocks_dir: "output/ICPARK_StructRecon/preoptimized_blocks"
+  presegmented_blocks_dir: "output/ICPARK_StructRecon/preoptimized_blocks"
+
+  advanced_features:
+    color_multires: false
+    dynamic_memory: true
+    block_consistency: false
+
+rendering:
+  perturb: true
+  n_stratified: 64
+  n_importance: 64
+  learnable_beta: true
+  ray_batch_size: 20000
+  output_gamma: false
+  surface_bias:
+    enable: true
+    lambda: 0.35
+    topk: 3
+
+planes_res:
+  coarse: 0.24
+  fine: 0.06
+  bound_dividable: 0.24
+
+c_planes_res:
+  coarse: 0.24
+  fine: 0.03
+
+tracking:
+  lr_T: 0.001
+  lr_R: 0.001
+  iters: 10
+  pixels: 2000
+  gt_camera: false
+  const_speed_assumption: true
+  w_sdf_fs: 1.0
+  w_sdf_center: 1.0
+  w_sdf_tail: 0.1
+  sdf_loss_delta: 0.1
+  w_depth: 1.0
+  w_color: 0.1
+  ignore_edge_W: 20
+  ignore_edge_H: 20
+  vis_freq: 50
+  vis_inside_freq: 0
+  no_vis_on_first_frame: false
+
+mapping:
+  device: "cuda:0"
+  every_frame: 5
+  keyframe_every: 5
+  pixels: 6000
+  iters_first: 500
+  iters: 10
+  mapping_window_size: 5
+  keyframe_selection_method: "overlap"
+  joint_opt: false
+  joint_opt_cam_lr: 0.0001
+  lr:
+    planes_lr: 0.01
+    c_planes_lr: 0.01
+    decoders_lr: 0.001
+  lr_factor: 1.0
+  lr_first_factor: 1.0
+  w_sdf_fs: 1.0
+  w_sdf_center: 1.0
+  w_sdf_tail: 0.1
+  sdf_loss_delta: 0.1
+  w_depth: 1.0
+  w_color: 0.1
+  mesh_freq: 50
+  ckpt_freq: 50
+  no_vis_on_first_frame: false
+  no_log_on_first_frame: false
+  no_mesh_on_first_frame: false
+  vis_freq: 50
+  vis_inside_freq: 0
+  bound: [[-2.0, 2.0], [-2.0, 2.0], [-2.0, 2.0]]
+  marching_cubes_bound: [[-2.0, 2.0], [-2.0, 2.0], [-2.0, 2.0]]
+
+  enable_pgis: true
+  pgis_tau_s: 1.0
+  pgis_epsilon: 0.001
+  pgis_eta: 0.5
+  pgis_n_stratified: 64
+  pgis_n_prior: 64
+  pgis_min_spacing: 0.25
+
+  enable_adaptive_prior_loss: true
+  prior_loss_lambda_max: 1.0
+  prior_loss_gamma: 1.0
+  prior_loss_tau_w: 1.0
+  prior_loss_delta: 0.1
+  prior_loss_w_normal: 0.1
+
+  dual_weight_arbitration:
+    enable: true
+    prior_weight_gamma: 1.0
+    dynamic_occlusion_threshold: 0.5
+    confidence_threshold_std: 0.1
+    data_weight_epsilon: 0.1
+
+  decoder_warmup:
+    enable: false
+    iters: 200
+    lr_mult: 5.0
+    pixels: 12000
+    w_color_scale: 0.0
+    w_depth_scale: 1.0
+    color_bootstrap:
+      enable: false
+      last_iters: 200
+      lr_mult: 5.0
+      w_color_scale: 1.0
+
+  loss_plot_interval: 20
+  edge_guided_pixels_ratio: 0.0
+  rgb_loss_type: "l1"
+  rgb_strict_w_l2: 2.5
+  rgb_strict_w_charb: 1.5
+  rgb_strict_w_cos: 1.5
+  rgb_charbonnier_eps: 5.0e-05
+  rgb_loss_in_lab: false
+  color_hit_weight_thresh: 0.003
+  export_blocks_instead_of_mesh: false
+  blocks_export_root: "output/blocks_export"
+  presegmented_blocks_dir: "output/ICPARK_StructRecon/preoptimized_blocks"
+  load_decoder_warmup: false
+  freeze_decoder_if_warmup_loaded: true
+  enable_geometry_regularization: false
+  geometry_reg_weight: 50.0
+  geometry_reg_start_frame: 0
+  geometry_reg_decay: 1.0
+  save_reference_geometry: true
+  prior_geometry_lr_scale: 1.0
+
+data:
+  input_folder: "Datasets/ICPARK"
+  output: "output/default"
+
+cam:
+  H: 720
+  W: 1280
+  fx: 534.1400
+  fy: 534.0450
+  cx: 634.2850
+  cy: 363.2920
+  png_depth_scale: 1000.0
+  crop_edge: 0
+  crop_size: null
+  distortion: [0.0, 0.0, 0.0, 0.0]
+
+meshing:
+  eval_rec: false
+  level_set: 0.0
+  mesh_bound_scale: 1.0
+  resolution: 0.03
+
+bound: [[-2.0, 2.0], [-2.0, 2.0], [-2.0, 2.0]]
+amp: true
