@@ -60,6 +60,11 @@ class Tracker(object):
         self.sdf_loss_delta = float(cfg.get('tracking', {}).get('sdf_loss_delta', 0.1))
         self.w_depth = cfg['tracking']['w_depth']              
         self.w_color = cfg['tracking']['w_color']                  
+        self.use_odom = bool(cfg.get('tracking', {}).get('use_odom', False))
+        self.w_odom = float(cfg.get('tracking', {}).get('w_odom', 10.0))
+        self.odom_rot_weight = float(cfg.get('tracking', {}).get('odom_rot_weight', 1.0))
+        self.odom_trans_weight = float(cfg.get('tracking', {}).get('odom_trans_weight', 1.0))
+        self.odom_huber_delta = float(cfg.get('tracking', {}).get('odom_huber_delta', 0.1))
         self.ignore_edge_W = cfg['tracking']['ignore_edge_W']                      
         self.ignore_edge_H = cfg['tracking']['ignore_edge_H']
         self.const_speed_assumption = cfg['tracking']['const_speed_assumption']                              
@@ -133,6 +138,101 @@ class Tracker(object):
 
         """The tracking stage does not optimize the scene, but only uses the existing scene to infer the camera pose. Therefore, we need to copy the shared network structure and feature plane (to prevent mapping training from changing them), and set them not to participate in gradient updates (requires_grad=False)."""
 
+    @staticmethod
+    def _skew(v: torch.Tensor) -> torch.Tensor:
+        vx, vy, vz = v.unbind(dim=-1)
+        o = torch.zeros_like(vx)
+        row0 = torch.stack([o, -vz, vy], dim=-1)
+        row1 = torch.stack([vz, o, -vx], dim=-1)
+        row2 = torch.stack([-vy, vx, o], dim=-1)
+        return torch.stack([row0, row1, row2], dim=-2)
+
+    @staticmethod
+    def _vee(M: torch.Tensor) -> torch.Tensor:
+        return torch.stack([M[..., 2, 1], M[..., 0, 2], M[..., 1, 0]], dim=-1)
+
+    def _so3_log_map(self, R: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        trace = R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]
+        cos_theta = ((trace - 1.0) * 0.5).clamp(-1.0 + eps, 1.0)
+        theta = torch.acos(cos_theta)
+
+        W = 0.5 * (R - R.transpose(-1, -2))
+        w_small = self._vee(W)
+
+        sin_theta = torch.sin(theta)
+        scale = theta / (2.0 * sin_theta.clamp_min(eps))
+        w_large = self._vee(scale.unsqueeze(-1).unsqueeze(-1) * (R - R.transpose(-1, -2)))
+
+        small = theta.abs() < 1e-4
+        return torch.where(small.unsqueeze(-1), w_small, w_large)
+
+    def _left_jacobian_inv_so3(self, omega: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        theta = torch.linalg.norm(omega, dim=-1, keepdim=True)
+        Omega = self._skew(omega)
+        I = torch.eye(3, dtype=omega.dtype, device=omega.device).expand_as(Omega)
+        Omega2 = Omega @ Omega
+
+        theta2 = theta * theta
+        sin_theta = torch.sin(theta)
+        cos_theta = torch.cos(theta)
+        coeff = (1.0 / theta2.clamp_min(eps)) - ((1.0 + cos_theta) / (2.0 * theta * sin_theta).clamp_min(eps))
+        J_inv_large = I - 0.5 * Omega + coeff.unsqueeze(-1) * Omega2
+        J_inv_small = I - 0.5 * Omega + (1.0 / 12.0) * Omega2
+
+        small = theta.squeeze(-1) < 1e-4
+        return torch.where(small.unsqueeze(-1).unsqueeze(-1), J_inv_small, J_inv_large)
+
+    def _se3_log_map(self, T: torch.Tensor) -> torch.Tensor:
+        R = T[..., :3, :3]
+        t = T[..., :3, 3]
+        omega = self._so3_log_map(R)
+        J_inv = self._left_jacobian_inv_so3(omega)
+        rho = (J_inv @ t.unsqueeze(-1)).squeeze(-1)
+        return torch.cat([rho, omega], dim=-1)
+
+    def _huber(self, x: torch.Tensor, delta: float) -> torch.Tensor:
+        abs_x = x.abs()
+        d = torch.as_tensor(delta, dtype=x.dtype, device=x.device)
+        return torch.where(abs_x < d, 0.5 * x * x, d * (abs_x - 0.5 * d))
+
+    def _safe_relative_transform(self, prev_pose: torch.Tensor, cur_pose: torch.Tensor) -> torch.Tensor:
+        try:
+            rel = torch.linalg.solve(prev_pose, cur_pose)
+            if torch.isfinite(rel).all():
+                return rel
+        except Exception:
+            pass
+        eye = torch.eye(4, dtype=cur_pose.dtype, device=cur_pose.device).unsqueeze(0)
+        if cur_pose.dim() == 3 and cur_pose.shape[0] != 1:
+            eye = eye.expand(cur_pose.shape[0], -1, -1)
+        return eye
+
+    def odom_loss(self, c2w: torch.Tensor, prev_est_c2w: torch.Tensor, odom_delta: torch.Tensor):
+        if not self.use_odom or prev_est_c2w is None or odom_delta is None:
+            return None
+
+        if c2w.dim() == 2:
+            c2w = c2w.unsqueeze(0)
+        if prev_est_c2w.dim() == 2:
+            prev_est_c2w = prev_est_c2w.unsqueeze(0)
+        if odom_delta.dim() == 2:
+            odom_delta = odom_delta.unsqueeze(0)
+
+        T_pred = prev_est_c2w @ odom_delta
+        T_err = self._safe_relative_transform(T_pred, c2w)
+        xi = self._se3_log_map(T_err)
+        trans = xi[..., :3]
+        rot = xi[..., 3:]
+
+        if self.odom_huber_delta > 0:
+            trans_term = self._huber(trans, self.odom_huber_delta).sum(dim=-1)
+            rot_term = self._huber(rot, self.odom_huber_delta).sum(dim=-1)
+        else:
+            trans_term = (trans * trans).sum(dim=-1)
+            rot_term = (rot * rot).sum(dim=-1)
+
+        return (self.odom_trans_weight * trans_term + self.odom_rot_weight * rot_term).mean()
+
     def sdf_losses(self, sdf, z_vals, gt_depth):
            
                      
@@ -183,7 +283,7 @@ class Tracker(object):
 
         return sdf_losses
 
-    def optimize_tracking(self, cam_pose, gt_color, gt_depth, batch_size, optimizer):
+    def optimize_tracking(self, cam_pose, gt_color, gt_depth, batch_size, optimizer, prev_est_c2w=None, odom_delta=None):
            
                             
         if self.use_block_manager:
@@ -244,6 +344,9 @@ class Tracker(object):
 
                     
         loss = self.w_depth * depth_loss + self.w_color * color_loss + sdf_loss
+        odom_loss_val = self.odom_loss(c2w, prev_est_c2w, odom_delta)
+        if odom_loss_val is not None:
+            loss = loss + self.w_odom * odom_loss_val
 
             
         optimizer.zero_grad()
@@ -305,10 +408,15 @@ class Tracker(object):
             pbar = tqdm(self.frame_loader, smoothing=0.05)
 
                                          
+        prev_gt_c2w_for_odom = None
         for idx, gt_color, gt_depth, gt_c2w in pbar:
             gt_color = gt_color.to(device, non_blocking=True)
             gt_depth = gt_depth.to(device, non_blocking=True)
             gt_c2w = gt_c2w.to(device, non_blocking=True)
+            if prev_gt_c2w_for_odom is None:
+                odom_delta = torch.eye(4, dtype=gt_c2w.dtype, device=device).unsqueeze(0)
+            else:
+                odom_delta = self._safe_relative_transform(prev_gt_c2w_for_odom, gt_c2w)
 
                      
             if not self.verbose:
@@ -412,7 +520,15 @@ class Tracker(object):
                     self.visualizer.save_imgs(idx, cam_iter, gt_depth, gt_color, cam_pose, all_planes,
                                               self.decoders)                                                        
 
-                    loss = self.optimize_tracking(cam_pose, gt_color, gt_depth, self.tracking_pixels, optimizer_camera)
+                    loss = self.optimize_tracking(
+                        cam_pose,
+                        gt_color,
+                        gt_depth,
+                        self.tracking_pixels,
+                        optimizer_camera,
+                        prev_est_c2w=pre_c2w,
+                        odom_delta=odom_delta,
+                    )
                     if loss < current_min_loss:                             
                         current_min_loss = loss
                         candidate_cam_pose = cam_pose.clone().detach()                                           
@@ -423,6 +539,7 @@ class Tracker(object):
                 0).clone()                                                         
             self.gt_c2w_list[idx] = gt_c2w.squeeze(0).clone()                               
             pre_c2w = c2w.clone()                            
+            prev_gt_c2w_for_odom = gt_c2w.clone()
             self.idx[0] = idx               
 
     def load_planes(self):
@@ -497,6 +614,14 @@ class Tracker(object):
         gt_color = gt_color.to(device)
         gt_depth = gt_depth.to(device)
         gt_c2w = gt_c2w.to(device)
+        if idx.item() == 0:
+            odom_delta = torch.eye(4, dtype=gt_c2w.dtype, device=device).unsqueeze(0)
+        else:
+            prev_gt = self.gt_c2w_list[idx - 1].unsqueeze(0).to(device)
+            if torch.isfinite(prev_gt).all() and torch.abs(prev_gt).sum() > 0:
+                odom_delta = self._safe_relative_transform(prev_gt, gt_c2w)
+            else:
+                odom_delta = torch.eye(4, dtype=gt_c2w.dtype, device=device).unsqueeze(0)
 
         if is_first_frame or self.gt_camera:
             c2w = gt_c2w
@@ -551,7 +676,15 @@ class Tracker(object):
                     self.visualizer.update_inside_rendering(idx.item(), cam_iter, c2w_full.squeeze(0), gt_color,
                                                             gt_depth, all_planes, self.decoders)
 
-                loss = self.optimize_tracking(cam_pose, gt_color, gt_depth, self.tracking_pixels, optimizer_camera)
+                loss = self.optimize_tracking(
+                    cam_pose,
+                    gt_color,
+                    gt_depth,
+                    self.tracking_pixels,
+                    optimizer_camera,
+                    prev_est_c2w=pre_c2w,
+                    odom_delta=odom_delta,
+                )
                 if loss < current_min_loss:
                     current_min_loss = loss
                     candidate_cam_pose = cam_pose.clone().detach()

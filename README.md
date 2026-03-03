@@ -5,6 +5,7 @@ This directory contains the code and configs used by the StructRecon paper.
 ## Double-blind note
 - Author and institution metadata are removed from the paper template.
 - The code repository does not require personal credentials or private endpoints.
+- The complete dataset (including full sensor logs and metadata) will be released after paper acceptance.
 
 ## Requirements
 - Python 3.8
@@ -12,14 +13,12 @@ This directory contains the code and configs used by the StructRecon paper.
 - Conda (recommended)
 
 ## Setup
-From `paper-code`:
 ```bash
 conda env create -f environment.yml
 conda activate structrecon
 ```
 
 ## Smoke tests
-From `paper-code`:
 ```bash
 python -m compileall .
 python run.py --help
@@ -28,7 +27,7 @@ python visualizer.py --help
 ```
 
 ## Data layout
-The dataset loader is selected by `dataset` in the config.
+This anonymous release only supports `ICPARK` (`dataset: "ICPARK"` in config).
 
 ICPARK:
 ```text
@@ -39,6 +38,8 @@ ICPARK:
     *.png
   pose/ or poses/
     *.txt
+  odom/
+    *.txt   # wheel-odometry increments (ΔT_t^odom)
 ```
 
 ## Configuration
@@ -50,6 +51,21 @@ At minimum, verify:
 - `data.output`
 - camera intrinsics and image size (`cam`)
 - `mapping.bound` (and `mapping.marching_cubes_bound` if used)
+
+### Tracking / odometry regularization
+Tracking supports an optional odometry residual term in pose optimization.
+
+- Default is disabled: `tracking.use_odom: false`
+- Enable it by setting: `tracking.use_odom: true`
+- Main knobs:
+  - `tracking.w_odom`
+  - `tracking.odom_trans_weight`
+  - `tracking.odom_rot_weight`
+  - `tracking.odom_huber_delta`
+
+When enabled, the current implementation derives frame-to-frame odometry increments
+from consecutive input poses (`pose/` or `poses/`), and adds the residual to the
+tracking loss.
 
 Run-time flags can override config values:
 - `--input_folder`
